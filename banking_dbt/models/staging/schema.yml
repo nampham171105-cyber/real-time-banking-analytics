@@ -1,0 +1,60 @@
+models:
+  - name: stg_customer
+    columns:
+      - name: customer_id
+        tests:
+          - unique    
+          - not_null  
+
+      - name: email
+        tests:
+          - not_null 
+
+  - name: stg_account
+    columns:
+      - name: account_id
+        tests:
+          - unique    
+          - not_null  
+
+      - name: balance
+        tests:
+          - is_positive    
+
+      - name: status
+        tests:
+          - accepted_values: 
+              values: ['ACTIVE','FREEZE','CLOSED']
+
+      - name: customer_id
+        tests:
+          - relationships: 
+              to: ref('stg_customer')
+              field: customer_id
+              
+  - name: stg_transaction
+    columns:
+      - name: transaction_id
+        tests:
+          - unique    
+          - not_null 
+
+      - name: amount
+        tests:
+          - is_positive
+
+      - name: transaction_type
+        tests:
+          - accepted_values:
+              values: ['DEPOSIT', 'WITHDRAW', 'TRANSFER']
+      
+      - name: txn_status
+        tests:
+          - accepted_values: 
+              values: ['SUCCESS', 'FAILED', 'PENDING']
+
+      - name: account_id
+        tests:
+          - relationships: 
+              to: ref('stg_account')
+              field: account_id   

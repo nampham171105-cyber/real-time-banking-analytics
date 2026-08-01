@@ -1,0 +1,12 @@
+snapshots:
+  - name: account_snapshot
+    relation: ref('stg_account')
+    config:
+      database: banking
+      unique_key: account_id
+      strategy: check
+      check_cols:
+        - status
+        - account_type
+        - balance
+      
