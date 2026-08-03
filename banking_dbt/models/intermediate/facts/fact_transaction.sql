@@ -2,12 +2,12 @@
 
 select
     t.transaction_id,
-    t.transaction_uuid,
     t.account_id,
     a.customer_id,
     t.amount,
     t.related_account_id,
     t.txn_status,
+    t.error_code,
     t.transaction_type,
     t.transaction_time,
     CURRENT_TIMESTAMP as load_timestamp

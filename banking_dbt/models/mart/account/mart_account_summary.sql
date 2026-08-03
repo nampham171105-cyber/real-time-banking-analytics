@@ -7,7 +7,8 @@ account_summary as (
     select 
         account_type,
         count(*) as account_count,
-        count(case when status = 'ACTIVE' then 1 end) as active_accounts,
+        count(case when status = 'ACTIVE' then 1 end) as active,
+        count(case when status = 'FROZEN' then 1 end) as frozen,
         coalesce(sum(balance), 0) as total_balance,
         coalesce(avg(balance), 0) as avg_balance
     from accounts

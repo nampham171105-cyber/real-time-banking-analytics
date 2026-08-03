@@ -7,6 +7,7 @@ select
     v:txn_type::string           as transaction_type,
     v:related_account_id::string as related_account_id,
     v:txn_status::string         as txn_status,
+    v:error_code::string         as error_code,
     v:created_at::timestamp      as transaction_time,
     CURRENT_TIMESTAMP            as load_timestamp
 from 

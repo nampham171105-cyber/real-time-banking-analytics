@@ -19,12 +19,16 @@ models:
 
       - name: balance
         tests:
-          - is_positive    
+          - is_positive:    
+              allow_zero: true
 
       - name: status
         tests:
           - accepted_values: 
-              values: ['ACTIVE','FREEZE','CLOSED']
+              values: 
+                - ACTIVE
+                - FROZEN
+                - CLOSED
 
       - name: customer_id
         tests:
@@ -46,12 +50,17 @@ models:
       - name: transaction_type
         tests:
           - accepted_values:
-              values: ['DEPOSIT', 'WITHDRAW', 'TRANSFER']
+              values: 
+                - DEPOSIT
+                - WITHDRAW
+                - TRANSFER
       
       - name: txn_status
         tests:
           - accepted_values: 
-              values: ['SUCCESS', 'FAILED', 'PENDING']
+              values: 
+                - COMPLETED
+                - FAILED
 
       - name: account_id
         tests:

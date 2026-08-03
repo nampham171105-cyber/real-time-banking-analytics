@@ -134,11 +134,33 @@ def open_account():
         "account_type": account_type
     })
 
-def freeze_acount():
-    pass
+def freeze_account():
+    account = random.choice(accounts)
+
+    account["status"] = "FROZEN"
+
+    cur.execute(
+        """
+        UPDATE account
+        SET status=%s
+        WHERE id=%s
+        """,
+        ("FROZEN", account["id"])
+    )
 
 def unfreeze_account():
-    pass
+    account = random.choice(accounts)
+
+    account["status"] = "ACTIVE"
+
+    cur.execute(
+        """
+        UPDATE account
+        SET status=%s
+        WHERE id=%s
+        """,
+        ("ACTIVE", account["id"])
+    )
 
 def change_account_type():
     account = random.choice(accounts)
@@ -159,10 +181,18 @@ def change_account_type():
 
 def deposit():
     account = random.choice(accounts)
+    amount = random_money(INITIAL_BALANCE_MIN, INITIAL_BALANCE_MAX)
+
     if account["status"] != 'ACTIVE':
+        cur.execute(
+            """
+            INSERT INTO transaction (account_id, txn_type, amount, txn_status, error_code)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (account["id"], "DEPOSIT", amount, "FAILED", "ACCOUNT_INACTIVE")
+        )
         return
 
-    amount = random_money(INITIAL_BALANCE_MIN, INITIAL_BALANCE_MAX)
     cur.execute(
         """UPDATE account
            SET balance = balance + %s
@@ -181,11 +211,28 @@ def deposit():
 
 def withdraw():
     account = random.choice(accounts)
-    if account["status"] != 'ACTIVE':
-        return
-
     amount = random_money(INITIAL_BALANCE_MIN, INITIAL_BALANCE_MAX)
+
+    if account["status"] != 'ACTIVE':
+        cur.execute(
+            """
+            INSERT INTO transaction (account_id, txn_type, amount, txn_status, error_code)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (account["id"], "WITHDRAW", amount, "FAILED", "ACCOUNT_INACTIVE")
+        )
+        return
     
+    if account["balance"] < amount:
+        cur.execute(
+            """
+            INSERT INTO transaction (account_id, txn_type, amount, txn_status, error_code)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (account["id"], "WITHDRAW", amount, "FAILED", "INSUFFICIENT_BALANCE")
+        )
+        return
+ 
     cur.execute(
         """
         UPDATE account
@@ -210,10 +257,24 @@ def transfer():
 
     amount = random_money(INITIAL_BALANCE_MIN, INITIAL_BALANCE_MAX)
 
+    failure_reason = None
     if sender["status"] != 'ACTIVE':
-        return 
-    if receiver["status"] != 'ACTIVE':
-        return 
+        failure_reason = "SENDER_INACTIVE"
+    elif receiver["status"] != 'ACTIVE':
+        failure_reason = "RECEIVER_INACTIVE"
+    elif sender["balance"] < amount:
+        failure_reason = "INSUFFICIENT_BALANCE"
+
+    if failure_reason:
+        cur.execute(
+            """
+            INSERT INTO transaction
+            (account_id, related_account_id, txn_type, amount, txn_status, error_code)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (sender["id"], receiver["id"], "TRANSFER", amount, "FAILED", failure_reason)
+        )
+        return
     # conn.autocommit = False
     try:
         cur.execute(
@@ -251,10 +312,9 @@ def transfer():
 
 def generate_initial_customers(n):
     """Hàm tạo n khách hàng và tài khoản ban đầu"""
-    print(f"\n🚀 Đang tạo {n} khách hàng và tài khoản. Vui lòng đợi...")
+    print(f"\n Đang tạo {n} khách hàng và tài khoản. Vui lòng đợi...")
     
     for _ in range(n):
-        # 1. Sinh dữ liệu khách hàng (Customer)
         first_name = fake.first_name()
         last_name = fake.last_name()
         email = fake.unique.email()
@@ -319,15 +379,21 @@ try:
                         withdraw,
                         transfer,
                         update_customer_info,
+                        open_account,
+                        freeze_account,
+                        unfreeze_account,
                         change_account_type,
-                     #   delete_customer
+                        #delete_customer
                     ],
                     weights = [
-                        30,
+                        25,
                         25,
                         30,
-                        10,
                         5,
+                        5,
+                        4,
+                        3,
+                        3
                     ],
                     k = TPS
                 )

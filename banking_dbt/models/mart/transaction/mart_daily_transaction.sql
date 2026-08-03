@@ -4,7 +4,8 @@ with transactions as (
     select 
         cast(transaction_time as date) as txn_date,
         transaction_type,
-        amount
+        amount,
+        txn_status
     from {{ ref('fact_transaction') }}
 ),
 
@@ -12,6 +13,8 @@ daily_summary as (
     select 
         txn_date,
         count(*) as total_transaction,
+        sum(case when txn_status = 'FAILED' then 1 else 0 end) as failed_transaction,
+        round(sum(case when txn_status='FAILED' then 1 else 0 end)::numeric / nullif(count(*),0),4) as failed_rate,
         sum(amount) as total_amount,
         count(case when transaction_type = 'DEPOSIT' then 1 end) as deposit_count,
         count(case when transaction_type = 'TRANSFER' then 1 end) as transfer_count,
@@ -24,5 +27,5 @@ daily_summary as (
     group by txn_date
 )
 
-select * 
+select *
 from daily_summary

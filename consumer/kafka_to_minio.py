@@ -96,7 +96,7 @@ while True:
             for msg in messages:
                 payload = msg.value.get("payload", {})
                 op = payload.get("op")
-                if op in ("c", "u", "r")
+                if op in ("c", "u", "r"):
                     tmp = payload.get("after")
                 elif op == "d":
                     tmp = payload.get("before")

@@ -9,9 +9,10 @@ with lastest_customer as (
         created_at,
         dbt_valid_from as effective_from,
         dbt_valid_to as effective_to,
-        case when dbt_valid_to is null then true else false end as is_current
+        --case when dbt_valid_to is null then true else false end as is_current
     from
         {{ ref("customer_snapshot")}}
+    where dbt_valid_to is null
 )
 
 select * from lastest_customer

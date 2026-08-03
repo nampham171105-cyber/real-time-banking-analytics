@@ -6,7 +6,7 @@ default_args={
     "owner": "airflow",
     "depend_on_past": False,
     "retries": 1,
-    "retries_delay": timedelta(minutes=1)
+    "retry_delay": timedelta(minutes=1)
 }
 
 with DAG(
@@ -19,6 +19,11 @@ with DAG(
     catchup=False,
     tags=["dbt", "snapshots"],
 ) as dag:
+
+    dbt_run_staging = BashOperator(
+        task_id="dbt_run_staging",
+        bash_command="cd /opt/airflow/banking_dbt && /opt/airflow/dbt_venv/bin/dbt run --select staging --profiles-dir /home/airflow/.dbt"
+    )
 
     dbt_test = BashOperator(
         task_id="dbt_test",
@@ -34,5 +39,10 @@ with DAG(
         bash_command="cd /opt/airflow/banking_dbt && /opt/airflow/dbt_venv/bin/dbt run --select intermediate --profiles-dir /home/airflow/.dbt"
     )
 
+    dbt_run_mart = BashOperator(
+            task_id="dbt_run_mart",
+            bash_command="cd /opt/airflow/banking_dbt && /opt/airflow/dbt_venv/bin/dbt run --select mart --profiles-dir /home/airflow/.dbt"
+        )
 
-    dbt_test >> dbt_snapshot >> dbt_run_intermediate
+
+    dbt_run_staging >> dbt_test >> dbt_snapshot >> dbt_run_intermediate >> dbt_run_mart

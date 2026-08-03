@@ -23,7 +23,8 @@ transactions as (
         account_id,
         transaction_id,
         amount,
-        transaction_time
+        transaction_time,
+        txn_status
     from {{ ref('fact_transaction') }}
 ),
 
@@ -39,7 +40,10 @@ customer_accounts as (
 customer_transactions as (
     select
         a.customer_id,
-        count(t.transaction_id) as total_transaction,
+        count(*) as total_transaction,
+        sum(case when t.txn_status = 'FAILED' then 1 else 0 end) as failed_transaction,
+        sum(case when t.txn_status = 'COMPLETED' then 1 else 0 end) as completed_transaction,
+        round(sum(case when t.txn_status='FAILED' then 1 else 0 end)::numeric / nullif(count(*),0),4) as failed_rate,
         sum(t.amount) as total_transaction_amount,
         min(t.transaction_time) as first_transaction,
         max(t.transaction_time) as last_transaction
@@ -57,6 +61,9 @@ customer_360 as (
         ca.account_count,
         coalesce(ca.total_balance, 0) as total_balance,
         coalesce(ct.total_transaction, 0) as total_transaction,
+        ct.completed_transaction,
+        ct.failed_transaction,
+        ct.failed_rate,
         coalesce(ct.total_transaction_amount, 0) as total_transaction_amount,
         ct.first_transaction,
         ct.last_transaction
