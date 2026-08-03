@@ -32,7 +32,7 @@ customer_accounts as (
     select 
         customer_id,
         count(account_id) as account_count,
-        sum(balance) as total_balance,
+        sum(balance) as total_balance
     from accounts
     group by customer_id
 ),
