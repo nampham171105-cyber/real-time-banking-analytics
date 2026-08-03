@@ -5,7 +5,7 @@ Một data pipeline end-to-end mô phỏng hệ thống ngân hàng, capture tha
 
 ## Kiến trúc tổng quan
 
-
+<img width="1255" height="617" alt="image" src="https://github.com/user-attachments/assets/25643118-89f3-483c-afd5-d7dd7e078f07" />
 
 **Nguyên lý thiết kế:**
 - **Immutable raw layer**: dữ liệu CDC gốc trên MinIO không bao giờ bị sửa/xoá — cho phép replay/backfill bất cứ lúc nào.
