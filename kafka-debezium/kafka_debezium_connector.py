@@ -26,7 +26,7 @@ connector_config = {
         "slot.name": "banking_slot",
         "publication.autocreate.mode": "filtered",
         "tombstones.on.delete": "false", # xóa tin nhắn có value là null, chỉ nhận cờ op: "d"
-        "decimal.handling.mode": "double", # giúp đọc dễ hơn, không chính xác tuyệt đối
+        "decimal.handling.mode": "precise", # chính xác tuyệt đối
     },
 }
 

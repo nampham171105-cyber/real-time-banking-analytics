@@ -10,7 +10,7 @@ with ranked as (
         current_timestamp       as load_timestamp,
         row_number() over (
             partition by v:id::string
-            order by v:_ts_ms::number desc
+            order by v:_ts_ms::number desc --khi update thì created_at không thay đổi nên phải order by _ts_ms để lấy giá trị mới nhất 
         ) as rn
     from
         {{ source('raw', 'customer') }}
