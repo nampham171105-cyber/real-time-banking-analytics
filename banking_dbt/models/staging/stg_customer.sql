@@ -10,7 +10,7 @@ with ranked as (
         current_timestamp       as load_timestamp,
         row_number() over (
             partition by v:id::string
-            order by v:created_at::timestamp desc
+            order by v:_ts_ms::number desc
         ) as rn
     from
         {{ source('raw', 'customer') }}
