@@ -70,7 +70,7 @@ buffer = {
 
 print("Connected to Kafka. Listening for messages...")
 
-BATCH_SIZE = 50
+BATCH_SIZE = 1000
 FLUSH_INTERVAL_SEC = 60
 last_flush = time.time()
 

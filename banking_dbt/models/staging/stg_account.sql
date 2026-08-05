@@ -5,7 +5,7 @@ with ranked as (
         v:id::string            as account_id,
         v:customer_id::string   as customer_id,
         v:account_type::string  as account_type,
-        v:balance::number(18,2) as balance,
+        v:balance::number(18,2) as balance, 
         v:currency::string      as currency,
         v:status::string        as status,
         v:created_at::timestamp as created_at,
