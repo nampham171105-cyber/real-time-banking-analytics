@@ -2,7 +2,7 @@
 docker/logs/
 docker/minio/
 docker/plugins/
-docker/postgres/
+docker/postgres/data
 
 # DBT cache
 banking_dbt/.dbt/
