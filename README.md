@@ -11,7 +11,7 @@ Một data pipeline end-to-end mô phỏng hệ thống ngân hàng, capture tha
 - **Idempotent ingestion**: mỗi file trên MinIO chỉ được COPY INTO Snowflake đúng 1 lần, kể cả khi Airflow retry nhiều lần, và `max_active_runs=1` đảm bảo không có 2 lần chạy DAG chồng lên nhau đọc cùng file.
 - **SCD Type 2** cho các dimension thay đổi theo thời gian (`customer`, `account`) bằng dbt snapshot.
 - **Append-only fact**: bảng `transaction` không bao giờ update, chỉ insert — giữ đúng bản chất log giao dịch tài chính.
-- **Soft-delete**: hệ thống không bao giờ `DELETE` vật lý customer/account — "xoá" khách hàng nghĩa là đánh cờ `is_deleted = true` và đóng toàn bộ tài khoản liên quan (`status = 'CLOSED'`). Điều này giữ nguyên toàn vẹn khoá ngoại (không vướng FK constraint giữa `account`/`transaction`) và bảo toàn đúng bản chất audit trail tài chính.
+- **Soft-delete**: hệ thống không bao giờ `DELETE` vật lý customer/account — "xoá" khách hàng nghĩa là đánh cờ `is_deleted = true` và đóng toàn bộ tài khoản liên quan (`status = 'CLOSED'`). 
 - **Transactional integrity ở tầng sinh dữ liệu**: các thao tác nhiều bước (chuyển tiền, đóng khách hàng) dùng `SAVEPOINT` để đảm bảo không có trạng thái "nửa vời" khi lỗi giữa chừng.
 - **Event-driven orchestration**: DAG transform (dbt) được trigger tự động qua Airflow Dataset ngay khi có dữ liệu mới, thay vì chạy theo lịch cố định độc lập không liên quan tới DAG ingest.
 
@@ -73,13 +73,16 @@ CREATE TABLE transaction (
 ├── docker-compose.yml              # mọi service đều có healthcheck + depends_on condition
 ├── requirements.txt
 │
-├── docker/
+├── docker/ 
+│   ├── snowflake/
+│   │   └── init_snowflake.sql   # khởi tạo ban đầu trong snowflake
 │   ├── postgres/
 │   │   └── init/
-│   │       └── 001_schema.sql      # tự động chạy khi Postgres khởi tạo lần đầu (volume rỗng)
+│   │       └── init_db.sql      # tự động chạy khi Postgres khởi tạo lần đầu 
 │   └── dags/
 │       ├── minio_to_snowflake.py   # DAG: MinIO (incoming/) → Snowflake RAW → MinIO (processed/), phát Dataset event
 │       └── scd2_snapnot.py         # DAG: staging → test → snapshot → intermediate → mart, trigger qua Dataset
+|    
 │
 ├── generator/
 │   └── fake_generator.py           # Sinh giao dịch giả lập, transfer()/close_customer() dùng SAVEPOINT
@@ -90,11 +93,6 @@ CREATE TABLE transaction (
 ├── consumer/
 │   └── kafka_to_minio.py           # Consume Kafka, batch, ghi Parquet lên MinIO, DLQ cho poison message
 │
-├── setup/
-│   └── 000_setup_snowflake.sql     # Chạy TAY 1 lần trên Snowflake Worksheet (Docker không tạo được object Snowflake)
-│
-├── tests/
-│   └── test_transfer_invariant.py  # Kiểm chứng bất biến tổng balance qua transfer thành công/thất bại
 │
 └── banking_dbt/                    # dbt project
     ├── dbt_project.yml
@@ -132,11 +130,10 @@ CREATE TABLE transaction (
 Sinh khách hàng, tài khoản ban đầu, sau đó chạy vòng lặp liên tục mô phỏng các sự kiện ngân hàng thực tế: `deposit`, `withdraw`, `transfer`, `update_customer_info`, `create_customer`, `open_account`, `freeze_account`, `unfreeze_account`, `change_account_type`, `close_customer`. Tốc độ sinh dữ liệu cấu hình qua biến `TPS`.
 
 - `transfer()` và `close_customer()` dùng `SAVEPOINT`: nếu lỗi giữa chừng, chỉ giao dịch/thao tác đó bị rollback — các event khác trong cùng batch commit vẫn an toàn.
-- `close_customer()` **không** `DELETE` — chỉ đánh cờ `is_deleted = true` cho customer và `status = 'CLOSED'` cho toàn bộ account của họ. `open_account()` loại trừ customer đã đóng khỏi danh sách chọn ngẫu nhiên.
-- `create_customer()` được đưa vào vòng lặp chính để pool khách hàng tăng trưởng liên tục, bù lại cho số bị đóng — tránh tình trạng cạn kiệt khách hàng active khi chạy dài.
+- `close_customer()` **không** `DELETE` — chỉ đánh cờ `is_deleted = true` cho customer và `status = 'CLOSED'` cho toàn bộ account của họ.
 
 ### 2. Capture thay đổi (Debezium)
-`kafka_debezium_connector.py` đăng ký 1 Postgres connector qua Kafka Connect REST API, theo dõi 3 bảng bằng logical replication (`pgoutput`). Vì hệ thống không còn `DELETE` vật lý, mọi thay đổi đều là insert/update bình thường — không cần cấu hình `REPLICA IDENTITY FULL`.
+`kafka_debezium_connector.py` đăng ký 1 Postgres connector qua Kafka Connect REST API, theo dõi 3 bảng bằng logical replication (`pgoutput`).
 
 ### 3. Consume & lưu trữ (`consumer/kafka_to_minio.py`)
 - Đọc message từ 3 Kafka topic, parse Debezium envelope, buffer theo batch (`BATCH_SIZE=5000` hoặc `FLUSH_INTERVAL_SEC=120`).
@@ -170,13 +167,6 @@ dbt run --select staging → dbt test → dbt snapshot → dbt run --select inte
 | **Intermediate (facts)** | `table`, `incremental` (merge) | `fact_transaction`: incremental theo `transaction_time`, lookback 2 giờ cho dữ liệu đến trễ |
 | **Mart** | `table` | `mart_customer_360`, `mart_account_summary`, `mart_daily_transaction`, `mart_transaction_trend`, `mart_failed_transaction_reason` |
 
-## Kiểm thử dữ liệu
-
-```bash
-python tests/test_transfer_invariant.py
-```
-Xác thực bất biến: **tổng balance toàn hệ thống không đổi khi transfer nội bộ**, kể cả khi transfer thất bại giữa chừng — verify cơ chế `SAVEPOINT` hoạt động đúng.
-
 ## Cài đặt & chạy dự án
 
 ### Yêu cầu
@@ -192,7 +182,7 @@ POSTGRES_HOST=postgres
 POSTGRES_PORT=5432
 POSTGRES_DB=banking
 POSTGRES_USER=postgres
-POSTGRES_PASSWORD=changeme
+POSTGRES_PASSWORD=postgres
 
 # Airflow metadata DB
 AIRFLOW_DB_USER=airflow
@@ -216,7 +206,7 @@ KAFKA_GROUP=banking-consumer-group
 SNOWFLAKE_USER=...
 SNOWFLAKE_PASSWORD=...
 SNOWFLAKE_ACCOUNT=...
-SNOWFLAKE_WAREHOUSE=BANKING_WH
+SNOWFLAKE_WAREHOUSE=COMPUTE_WH
 SNOWFLAKE_DB=banking
 SNOWFLAKE_SCHEMA=raw
 ```
@@ -224,16 +214,10 @@ SNOWFLAKE_SCHEMA=raw
 ### Các bước chạy
 
 ```bash
-# 1. Setup Snowflake — chạy TAY 1 lần trên Snowflake Web UI (Worksheets) hoặc SnowSQL.
-#    Docker không tạo được object trên Snowflake (dịch vụ cloud bên ngoài),
-#    nên bước này KHÔNG tự động qua docker compose.
-#    Nội dung: setup/000_setup_snowflake.sql
-#    -> tạo warehouse, database, schema RAW/ANALYTICS, 3 bảng RAW (v VARIANT)
+# 1. Setup Snowflake — chạy TAY 1 lần trên Snowflake Web UI.
+copy file init_snowflake lên snowflake, bôi đen rồi chạy
 
 # 2. Khởi động hạ tầng — Postgres tự tạo sẵn 3 bảng customer/account/transaction
-#    nhờ docker/postgres/init/001_schema.sql (chỉ chạy khi volume Postgres rỗng —
-#    nếu chạy lại trên volume đã có dữ liệu cũ, xoá thư mục ./docker/postgres/data trước).
-#    Mọi service đều có healthcheck, đợi tới khi các service phụ thuộc thực sự sẵn sàng.
 docker compose up -d
 
 # 3. Đăng ký Debezium Postgres connector
@@ -253,16 +237,12 @@ python kafka_to_minio.py
 #    - Unpause DAG minio_to_snowflake_banking (chạy mỗi 10 phút)
 #    - Unpause DAG SCD2_snapshots (sẽ TỰ ĐỘNG chạy sau khi có dữ liệu mới, không cần trigger tay)
 
-# 7. (Tuỳ chọn) Kiểm chứng bất biến số dư
-python tests/test_transfer_invariant.py
 ```
 
 ## Known limitations / Hướng phát triển tiếp theo
 
-Dự án ưu tiên xử lý theo thứ tự: **tính đúng đắn dữ liệu → độ tin cậy pipeline → tối ưu chi phí → polish**. Các hạng mục sau chưa hoàn thiện, không ảnh hưởng tính đúng đắn dữ liệu hiện tại:
+Dự án ưu tiên xử lý theo thứ tự: **tính đúng đắn dữ liệu → độ tin cậy pipeline**. Các hạng mục sau chưa hoàn thiện, không ảnh hưởng tính đúng đắn dữ liệu hiện tại:
 
-- **Ledger model**: `account.balance` hiện là 1 cột bị update trực tiếp — mô hình đơn giản hoá so với double-entry ledger thực tế của core banking.
-- **dbt docs & source freshness**: model chưa có `description:` đầy đủ; chưa cấu hình `dbt source freshness`.
 - **Alerting**: chưa có `on_failure_callback` gửi cảnh báo (Slack/email) khi DAG hoặc dbt test fail.
 - **Snowpipe auto-ingest**: hiện dùng Airflow polling MinIO mỗi 10 phút; có thể nâng cấp lên push-based ingestion để giảm độ trễ hơn nữa.
 - **CI/CD**: chưa có pipeline tự động chạy `dbt run`/`dbt test` trên pull request.
