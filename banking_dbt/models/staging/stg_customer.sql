@@ -1,4 +1,4 @@
-{{ config(materialized = 'view' )}} -- ưu tiên cao nhất
+{{ config(materialized = 'view' )}}
 
 with ranked as (
     select
@@ -7,10 +7,11 @@ with ranked as (
         v:last_name::string     as last_name,
         v:email::string         as email,
         v:created_at::timestamp as created_at,
+        v:is_deleted::boolean   as is_deleted,
         current_timestamp       as load_timestamp,
         row_number() over (
             partition by v:id::string
-            order by v:_ts_ms::number desc --khi update thì created_at không thay đổi nên phải order by _ts_ms để lấy giá trị mới nhất 
+            order by v:_ts_ms::number desc
         ) as rn
     from
         {{ source('raw', 'customer') }}
@@ -22,6 +23,7 @@ select
     last_name,
     email,
     created_at,
+    is_deleted,
     load_timestamp
 from
     ranked

@@ -9,3 +9,4 @@ snapshots:
         - first_name
         - last_name
         - email
+        - is_deleted   # đọc trực tiếp từ cột nguồn, không còn suy ra từ CDC op

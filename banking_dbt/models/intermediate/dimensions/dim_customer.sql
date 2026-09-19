@@ -8,11 +8,11 @@ with lastest_customer as (
         email,
         created_at,
         dbt_valid_from as effective_from,
-        dbt_valid_to as effective_to,
-        --case when dbt_valid_to is null then true else false end as is_current
+        dbt_valid_to as effective_to
     from
         {{ ref("customer_snapshot")}}
     where dbt_valid_to is null
+      and is_deleted = false
 )
 
 select * from lastest_customer

@@ -10,12 +10,10 @@ with lastest_account as (
         status,
         created_at,
         dbt_valid_from as effective_from,
-        dbt_valid_to as effective_to,
-        --case when dbt_valid_to is null then true else false end as is_current
+        dbt_valid_to as effective_to
     from
         {{ ref("account_snapshot")}}
     where dbt_valid_to is null
 )
 
 select * from lastest_account
-

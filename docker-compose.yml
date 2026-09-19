@@ -4,51 +4,56 @@ services:
     image: apache/kafka:latest
     container_name: kafka
     ports:
-      - "9092:9092"   # nội bộ (cho các service khác trong mạng: connect, spark...)
-      - "29092:29092" # bên ngoài (cho app chạy trên máy host, ví dụ consumer python)
+      - "9092:9092"
+      - "29092:29092"
     environment:
-      # ---- KRaft core ----
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-
-      # ---- Listeners ----
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_EXTERNAL://localhost:29092
-      # KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_EXTERNAL://host.docker.internal:29092
-
-      # ---- Controller ----
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-
-      # ---- Protocol mapping ----
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
-
-      # ---- Storage ----
       KAFKA_LOG_DIRS: /var/lib/kafka/data
     volumes:
-      - kafka_data:/var/lib/kafka/data  
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     ports:
-      - "8081:8080"   
+      - "8081:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local-kafka
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8080' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   connect:
     image: debezium/connect:2.2
     container_name: debezium
     depends_on:
-      - kafka
-      - postgres
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     ports:
       - "8083:8083"
     environment:
@@ -61,6 +66,12 @@ services:
       VALUE_CONVERTER_SCHEMAS_ENABLE: 'false'
       KEY_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
       VALUE_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8083/connectors || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   postgres:
     image: postgres:15
@@ -73,10 +84,17 @@ services:
       - "5435:5432"
     volumes:
       - ./docker/postgres/data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
     command: >
       postgres -c wal_level=logical
               -c max_wal_senders=10
               -c max_replication_slots=10
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   minio:
     image: minio/minio:latest
@@ -90,6 +108,12 @@ services:
       - "9001:9001"
     volumes:
       - ./docker/minio/data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   airflow-webserver:
     build:
@@ -98,7 +122,7 @@ services:
     container_name: airflow-webserver
     depends_on:
       airflow-postgres:
-        condition: service_healthy   
+        condition: service_healthy
       airflow-scheduler:
         condition: service_started
     environment:
@@ -119,6 +143,12 @@ services:
         airflow users create --role Admin --username admin --password admin --email admin@example.com --firstname Admin --lastname User || true;
         airflow webserver
       "
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s   # webserver cần thời gian db migrate + tạo user admin trước khi lên
 
   airflow-scheduler:
     build:
@@ -139,6 +169,12 @@ services:
       - ./banking_dbt:/opt/airflow/banking_dbt
       - ./banking_dbt/.dbt:/home/airflow/.dbt
     command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$$HOSTNAME\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   airflow-postgres:
     image: postgres:15

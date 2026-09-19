@@ -6,7 +6,6 @@ snapshots:
       unique_key: account_id
       strategy: check
       check_cols:
-        - status
+        - status        # bao gồm cả giá trị CLOSED — không cần cột is_deleted riêng
         - account_type
         - balance
-      

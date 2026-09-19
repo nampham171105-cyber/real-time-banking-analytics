@@ -4,6 +4,8 @@ import logging
 import boto3
 import snowflake.connector
 from airflow import DAG
+from airflow.datasets import Dataset
+from airflow.exceptions import AirflowSkipException
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -12,14 +14,12 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# -------- MinIO Config --------
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY")
 BUCKET = os.getenv("MINIO_BUCKET")
 LOCAL_DIR = os.getenv("MINIO_LOCAL_DIR", "/tmp/minio_downloads")
 
-# -------- Snowflake Config --------
 SNOWFLAKE_USER = os.getenv("SNOWFLAKE_USER")
 SNOWFLAKE_PASSWORD = os.getenv("SNOWFLAKE_PASSWORD")
 SNOWFLAKE_ACCOUNT = os.getenv("SNOWFLAKE_ACCOUNT")
@@ -28,6 +28,10 @@ SNOWFLAKE_DB = os.getenv("SNOWFLAKE_DB")
 SNOWFLAKE_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA")
 
 TABLES = ["customer", "account", "transaction"]
+
+# Dataset dùng để trigger DAG SCD2_snapshots tự động khi có dữ liệu mới,
+# thay vì 2 DAG chạy theo 2 lịch cố định độc lập không liên quan nhau.
+RAW_LOADED_DATASET = Dataset("snowflake://banking/raw/loaded")
 
 
 def get_s3_client():
@@ -40,7 +44,6 @@ def get_s3_client():
 
 
 def key_exists(s3, key: str) -> bool:
-    """Kiểm tra 1 object còn tồn tại trên MinIO hay không."""
     try:
         s3.head_object(Bucket=BUCKET, Key=key)
         return True
@@ -48,15 +51,8 @@ def key_exists(s3, key: str) -> bool:
         return False
 
 
-# -------- Task 1: liệt kê + tải file từ incoming/ --------
 def download_from_minio():
-    """
-    Liệt kê và tải toàn bộ file trong `<table>/incoming/`.
-    Dùng paginator vì list_objects_v2 chỉ trả tối đa 1000 object/lần.
-    """
     os.makedirs(LOCAL_DIR, exist_ok=True)
-
-    # Dọn sạch thư mục tạm trước khi tải file mới
     for f in glob.glob(f"{LOCAL_DIR}/*"):
         os.remove(f)
 
@@ -68,7 +64,6 @@ def download_from_minio():
         prefix = f"{table}/incoming/"
         local_files[table] = []
         s3_keys_map[table] = []
-
         try:
             paginator = s3.get_paginator("list_objects_v2")
             for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
@@ -80,28 +75,12 @@ def download_from_minio():
                     local_files[table].append(local_file)
                     s3_keys_map[table].append(key)
         except Exception:
-            # Lỗi khi list/download 1 bảng không nên chặn việc tải các bảng khác
             logger.error(f"Failed to list/download files for table {table}", exc_info=True)
 
     return {"local_files": local_files, "s3_keys_map": s3_keys_map}
 
 
-# -------- Task 2: load vào Snowflake, chống trùng lặp khi retry --------
 def load_to_snowflake(**kwargs):
-    """
-    Load file Parquet vào Snowflake, sau đó move file đã xử lý sang `<table>/processed/`.
-
-    CHỐNG TRÙNG LẶP KHI RETRY:
-    Trước khi xử lý mỗi file, kiểm tra lại trên MinIO xem key đó còn nằm ở
-    `incoming/` hay không.
-      - Còn tồn tại  -> chưa xử lý (hoặc lần trước lỗi giữa chừng) -> xử lý.
-      - Không còn nữa -> lần chạy trước đã COPY INTO + move xong rồi -> bỏ qua.
-    Nhờ vậy, dù Airflow retry bao nhiêu lần, mỗi file chỉ thực sự được
-    COPY INTO đúng 1 lần — không cần lưu thêm trạng thái ở đâu khác, MinIO
-    tự đóng vai trò "nguồn sự thật" cho việc file nào đã xử lý xong.
-
-    Mỗi bảng xử lý độc lập: bảng này lỗi không chặn các bảng khác.
-    """
     data = kwargs["ti"].xcom_pull(task_ids="download_minio")
     local_files = data["local_files"]
     s3_keys = data["s3_keys_map"]
@@ -117,6 +96,7 @@ def load_to_snowflake(**kwargs):
     )
 
     failed_tables = []
+    any_loaded = False  # theo dõi có bảng nào thực sự load được gì không
 
     try:
         for table in TABLES:
@@ -126,11 +106,7 @@ def load_to_snowflake(**kwargs):
                 logger.info(f"No files for {table}, skipping.")
                 continue
 
-            # Chỉ giữ lại các cặp (file local, key) mà key VẪN CÒN trên MinIO.
-            # Đây là bước chống trùng lặp cốt lõi khi retry.
-            pending = [
-                (f, key) for f, key in zip(files, keys) if key_exists(s3, key)
-            ]
+            pending = [(f, key) for f, key in zip(files, keys) if key_exists(s3, key)]
             skipped = len(files) - len(pending)
             if skipped:
                 logger.info(f"{table}: bỏ qua {skipped} file đã xử lý ở lần chạy trước.")
@@ -155,31 +131,31 @@ def load_to_snowflake(**kwargs):
                 cur.execute(f"REMOVE @%{table}")
                 logger.info(f"Cleared stage @%{table}")
 
-                # Chỉ move file khi COPY INTO của đúng bảng này đã thành công
                 for _, key in pending:
                     new_key = key.replace(f"{table}/incoming/", f"{table}/processed/", 1)
-                    s3.copy_object(
-                        Bucket=BUCKET,
-                        CopySource={"Bucket": BUCKET, "Key": key},
-                        Key=new_key,
-                    )
+                    s3.copy_object(Bucket=BUCKET, CopySource={"Bucket": BUCKET, "Key": key}, Key=new_key)
                     s3.delete_object(Bucket=BUCKET, Key=key)
                     logger.info(f"Marked as processed: {key} -> {new_key}")
+
+                any_loaded = True
 
             except Exception:
                 logger.error(f"Failed to load table {table}", exc_info=True)
                 failed_tables.append(table)
             finally:
                 cur.close()
-
     finally:
         conn.close()
 
     if failed_tables:
         raise RuntimeError(f"Failed to load tables: {failed_tables}")
 
+    if not any_loaded:
+        # Không có dữ liệu mới -> skip để KHÔNG phát Dataset event,
+        # nhờ đó SCD2_snapshots không bị trigger chạy dbt vô ích.
+        raise AirflowSkipException("No new data loaded in this run, skipping downstream trigger.")
 
-# -------- Airflow DAG --------
+
 default_args = {
     "owner": "airflow",
     "retries": 3,
@@ -192,11 +168,10 @@ with DAG(
     dag_id="minio_to_snowflake_banking",
     default_args=default_args,
     description="Load MinIO parquet (incoming/) into Snowflake RAW tables, then mark as processed/",
-    #schedule_interval="*/10 * * * *",
-    schedule_interval=None,
+    schedule_interval="*/10 * * * *",   # polling mỗi 10 phút — đủ nhanh cho SLA <1h, đủ thưa để tránh small-file
     start_date=datetime(2025, 1, 1),
     catchup=False,
-    #max_active_runs=1, 
+    max_active_runs=1,                  # bắt buộc: chống race condition khi 2 run chồng lên nhau (COPY INTO trùng)
     tags=["minio", "snowflake", "raw"],
 ) as dag:
 
@@ -208,6 +183,7 @@ with DAG(
     task2 = PythonOperator(
         task_id="load_snowflake",
         python_callable=load_to_snowflake,
+        outlets=[RAW_LOADED_DATASET],
     )
 
     task1 >> task2
