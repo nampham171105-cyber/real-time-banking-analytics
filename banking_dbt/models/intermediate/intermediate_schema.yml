@@ -11,7 +11,7 @@ models:
       - name: customer_id
         tests:
           - relationships:
-              to: ref('dim_customer')
+              to: ref('customer_snapshot')
               field: customer_id
 
   - name: fact_transaction
