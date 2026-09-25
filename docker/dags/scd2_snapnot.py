@@ -1,7 +1,8 @@
+from datetime import datetime, timedelta
+
 from airflow import DAG
 from airflow.datasets import Dataset
 from airflow.operators.bash import BashOperator
-from datetime import datetime, timedelta
 
 RAW_LOADED_DATASET = Dataset("snowflake://banking/raw/loaded")
 
