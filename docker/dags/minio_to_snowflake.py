@@ -1,13 +1,14 @@
-import os
 import glob
 import logging
+import os
+from datetime import datetime, timedelta
+
 import boto3
 import snowflake.connector
 from airflow import DAG
 from airflow.datasets import Dataset
 from airflow.exceptions import AirflowSkipException
 from airflow.operators.python import PythonOperator
-from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -75,7 +76,7 @@ def download_from_minio():
                     local_files[table].append(local_file)
                     s3_keys_map[table].append(key)
         except Exception:
-            logger.error(f"Failed to list/download files for table {table}", exc_info=True)
+            logger.exception(f"Failed to list/download files for table {table}")
 
     return {"local_files": local_files, "s3_keys_map": s3_keys_map}
 
@@ -140,7 +141,7 @@ def load_to_snowflake(**kwargs):
                 any_loaded = True
 
             except Exception:
-                logger.error(f"Failed to load table {table}", exc_info=True)
+                logger.exception(f"Failed to load table {table}")
                 failed_tables.append(table)
             finally:
                 cur.close()

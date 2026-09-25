@@ -1,3 +1,6 @@
+# GitHub Actions cache
+/.github/.cache
+
 # Docker cache
 docker/logs/
 docker/minio/
