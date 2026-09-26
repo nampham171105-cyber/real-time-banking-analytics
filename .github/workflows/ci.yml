@@ -57,7 +57,7 @@ jobs:
                 role: ACCOUNTADMIN
                 database: BANKING
                 warehouse: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
-                schema: schema: ${{ env.CI_SCHEMA }}
+                schema: ${{ env.CI_SCHEMA }}
           EOL
 
       - name: dbt validation
