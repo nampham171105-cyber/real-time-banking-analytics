@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [dev]
 
   pull_request:
     branches: [main]
@@ -10,6 +10,9 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
+
+    env:
+      CI_SCHEMA: CI_RUN_${{ github.run_id }}
 
     steps:
       - name: Checkout repository
@@ -29,20 +32,24 @@ jobs:
         run: |
           pip install ruff
           ruff check .
+      
 
       # - name: Run unit tests
       #   run: |
       #     pip install pytest
       #     pytest tests/
 
+      - name: Build airflow image 
+        run: docker build -f airflow.dockerfile -t airflow:ci-check .
+
       - name: Setup dbt profile
         run: |
           mkdir -p ~/.dbt
           cat > ~/.dbt/profiles.yml <<EOL
           banking_dbt:
-            target: prod
+            target: ci
             outputs:
-              prod:
+              ci:
                 type: snowflake
                 account: ${{ secrets.SNOWFLAKE_ACCOUNT }}
                 user: ${{ secrets.SNOWFLAKE_USER }}
@@ -50,12 +57,33 @@ jobs:
                 role: ACCOUNTADMIN
                 database: BANKING
                 warehouse: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
-                schema: ANALYTICS
+                schema: schema: ${{ env.CI_SCHEMA }}
           EOL
 
       - name: dbt validation
         run: |
           cd banking_dbt
           dbt deps
-          dbt compile
-          dbt test
+          dbt build
+      - name: clear schema CI
+        if: always()
+        run: |
+          cd banking_dbt
+          python -c "
+          import os, snowflake.connector
+          conn = snowflake.connector.connect(
+              account=os.environ['SNOWFLAKE_ACCOUNT'],
+              user=os.environ['SNOWFLAKE_USER'],
+              password=os.environ['SNOWFLAKE_PASSWORD'],
+              role='ACCOUNTADMIN',
+              warehouse=os.environ['SNOWFLAKE_WAREHOUSE'],
+          )
+          conn.cursor().execute(f\"DROP SCHEMA IF EXISTS BANKING.{os.environ['CI_SCHEMA']}\")
+          conn.close()
+          print('Cleaned up CI schema:', os.environ['CI_SCHEMA'])
+          "
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
