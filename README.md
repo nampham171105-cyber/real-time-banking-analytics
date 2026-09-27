@@ -28,6 +28,7 @@ Một data pipeline end-to-end mô phỏng hệ thống ngân hàng, capture tha
 | Orchestration | Apache Airflow 2.9.3 (Datasets) | Điều phối lịch chạy và trigger phụ thuộc giữa các DAG |
 | Data generator | Python (Faker, psycopg2) | Sinh dữ liệu giao dịch giả lập với tốc độ cấu hình được (TPS) |
 | Consumer | Python (kafka-python, boto3) | Đọc Kafka, ghi Parquet lên MinIO, cách ly poison message vào DLQ |
+| CI/CD | GitHub Actions | Kiểm tra lint + build image + chạy dbt build trên mọi PR; chạy dbt build lên production khi merge vào `main` |
 
 ## Schema nguồn (OLTP)
 
@@ -69,6 +70,10 @@ CREATE TABLE transaction (
 
 ```
 .
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                  # Lint + build Docker + dbt build trên schema CI cô lập, chạy trên mọi PR
+│       └── cd.yml                  # dbt build lên schema production, chạy khi merge vào main
 ├── airflow.dockerfile
 ├── docker-compose.yml              # mọi service đều có healthcheck + depends_on condition
 ├── requirements.txt
@@ -167,6 +172,25 @@ dbt run --select staging → dbt test → dbt snapshot → dbt run --select inte
 | **Intermediate (facts)** | `table`, `incremental` (merge) | `fact_transaction`: incremental theo `transaction_time`, lookback 2 giờ cho dữ liệu đến trễ |
 | **Mart** | `table` | `mart_customer_360`, `mart_account_summary`, `mart_daily_transaction`, `mart_transaction_trend`, `mart_failed_transaction_reason` |
 
+Dự án hiện có **23 automated dbt test** (unique, not_null, relationships, accepted_values, và custom test `is_positive`) phủ tầng staging và intermediate, đạt **100% pass rate** ở lần chạy gần nhất.
+
+## CI/CD
+
+Project có 2 GitHub Actions workflow tại `.github/workflows/`:
+
+### `ci.yml` — chạy trên mọi Pull Request vào `main` (và mọi push vào `dev`)
+- Lint code Python bằng `ruff`.
+- Build thử Airflow Docker image (`airflow.dockerfile`) để bắt lỗi Dockerfile sớm, trước khi merge.
+- Chạy `dbt build` (run + test) trên **1 schema Snowflake riêng cho mỗi lần chạy** (`CI_RUN_<github.run_id>`) — tách biệt hoàn toàn với schema production, tự động xoá schema này ở cuối job (kể cả khi build fail), để không để lại rác trên Snowflake qua từng lần CI chạy.
+
+### `cd.yml` — chạy khi merge vào `main`
+- Chạy `dbt build` (run + test) thẳng lên schema `ANALYTICS` (production).
+
+**Giới hạn hiện tại của CI/CD** (xem thêm mục Known limitations bên dưới):
+- Đang dùng role `ACCOUNTADMIN` cho cả 2 workflow — chưa đúng nguyên tắc least-privilege, cần tạo role riêng chỉ có đúng quyền cần thiết trước khi coi đây là pipeline an toàn để chạy thường xuyên.
+- Bước chạy unit test (`pytest`) đang bị comment trong `ci.yml`, chưa thực sự chạy trong CI.
+- `cd.yml` mới dừng ở chạy `dbt build`, chưa có bước build & publish Docker image (generator/consumer/airflow) lên container registry — về bản chất đây vẫn là CI chạy trên nhánh `main`, chưa phải CD đầy đủ.
+
 ## Cài đặt & chạy dự án
 
 ### Yêu cầu
@@ -239,10 +263,26 @@ python kafka_to_minio.py
 
 ```
 
+## Số liệu đo được (benchmark thực tế)
+
+Đo trên 1 lần chạy thử ~1 giờ, TPS=200, dữ liệu đo bằng SQL trực tiếp trên Snowflake (xem `docs/manual-measurement-guide.md`):
+
+| Chỉ số | Giá trị |
+|---|---|
+| Throughput end-to-end (bảng `transaction`) | ~160 rows/sec, chênh <2% giữa 3 checkpoint (generator, MinIO, Snowflake) |
+| Tổng số bản ghi xử lý | 1,033,642 CDC event (586,923 transaction) trong ~1 giờ |
+| Dung lượng MinIO | ~25.4 MB / 351 file parquet |
+| Tỷ lệ Dead Letter Queue | 0% (0 message lỗi) |
+| Số lượng dbt test | 23, pass rate 100% |
+
 ## Known limitations / Hướng phát triển tiếp theo
 
 Dự án ưu tiên xử lý theo thứ tự: **tính đúng đắn dữ liệu → độ tin cậy pipeline**. Các hạng mục sau chưa hoàn thiện, không ảnh hưởng tính đúng đắn dữ liệu hiện tại:
 
 - **Alerting**: chưa có `on_failure_callback` gửi cảnh báo (Slack/email) khi DAG hoặc dbt test fail.
-- **Snowpipe auto-ingest**: hiện dùng Airflow polling MinIO mỗi 10 phút; có thể nâng cấp lên push-based ingestion để giảm độ trễ hơn nữa.
-- **CI/CD**: chưa có pipeline tự động chạy `dbt run`/`dbt test` trên pull request.
+- **Snowpipe auto-ingest**: hiện dùng Airflow polling MinIO mỗi 10 phút; đo thực tế cho thấy đây là phần đóng góp lớn nhất vào data freshness latency — có thể nâng cấp lên push-based ingestion để giảm độ trễ hơn nữa.
+- **CI/CD — least-privilege**: workflow hiện dùng role `ACCOUNTADMIN` cho cả CI lẫn CD; cần tạo role riêng chỉ có đúng quyền cần thiết (usage warehouse, select trên RAW, full quyền trên ANALYTICS) trước khi coi đây là pipeline an toàn để chạy thường xuyên trên secret thật.
+- **CI/CD — unit test**: bước `pytest` đang bị comment trong `ci.yml`, chưa thực sự chạy trong CI dù project đã có sẵn bộ unit test cho consumer.
+- **CI/CD — chưa publish artifact**: `cd.yml` mới dừng ở chạy `dbt build`, chưa có bước build & push Docker image lên registry — chưa phải CD đầy đủ theo đúng nghĩa.
+- **Source-file tracing**: RAW hiện chưa lưu file MinIO gốc sinh ra từng bản ghi — trace ngược từ mart về đúng file chỉ đoán gần đúng theo thời gian, chưa chính xác 1-1.
+- **Generator/consumer chưa container hoá**: hiện chạy tay ngoài `docker-compose.yml`, chưa khởi động được toàn bộ hệ thống chỉ bằng 1 lệnh `docker compose up`.
