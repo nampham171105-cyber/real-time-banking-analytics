@@ -9,7 +9,8 @@ with ranked as (
         v:currency::string      as currency,
         v:status::string        as status,
         v:created_at::timestamp as created_at,
-        current_timestamp       as load_timestamp,
+        _loaded_at              as load_timestamp,
+        _source_file            as source_file,
         row_number() over (
             partition by v:id::string
             order by v:_ts_ms::number desc
@@ -26,7 +27,8 @@ select
     currency,
     status,
     created_at,
-    load_timestamp
+    load_timestamp,
+    source_file
 from
     ranked
 where

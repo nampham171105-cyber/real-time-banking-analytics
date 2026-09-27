@@ -9,6 +9,7 @@ select
     v:txn_status::string         as txn_status,
     v:error_code::string         as error_code,
     v:created_at::timestamp      as transaction_time,
-    CURRENT_TIMESTAMP            as load_timestamp
+    _loaded_at                   as load_timestamp,
+    _source_file                 as source_file,
 from 
     {{ source('raw', 'transaction') }}

@@ -386,7 +386,7 @@ def generate_initial_customers(n):
 
 # ----------MAIN LOOP------------
 
-TPS = 1200
+TPS = 375
 
 try:
     n_str = input("Nhập số lượng khách hàng ban đầu cần tạo: ")

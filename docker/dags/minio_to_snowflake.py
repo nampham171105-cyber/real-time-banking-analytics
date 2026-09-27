@@ -122,8 +122,11 @@ def load_to_snowflake(**kwargs):
                     logger.info(f"Uploaded {f} -> @{table} stage")
 
                 cur.execute(f"""
-                    COPY INTO {table}
-                    FROM @%{table}
+                    COPY INTO {table} (v, _source_file, _loaded_at)
+                    FROM (
+                        SELECT $1, METADATA$FILENAME, CURRENT_TIMESTAMP()
+                        FROM @%{table}
+                    )
                     FILE_FORMAT=(TYPE=PARQUET)
                     ON_ERROR='CONTINUE'
                 """)
@@ -131,7 +134,7 @@ def load_to_snowflake(**kwargs):
 
                 cur.execute(f"REMOVE @%{table}")
                 logger.info(f"Cleared stage @%{table}")
-
+            
                 for _, key in pending:
                     new_key = key.replace(f"{table}/incoming/", f"{table}/processed/", 1)
                     s3.copy_object(Bucket=BUCKET, CopySource={"Bucket": BUCKET, "Key": key}, Key=new_key)

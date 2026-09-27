@@ -9,8 +9,8 @@ RAW_LOADED_DATASET = Dataset("snowflake://banking/raw/loaded")
 default_args = {
     "owner": "airflow",
     "depend_on_past": False,
-    "retries": 1,
-    "retry_delay": timedelta(minutes=1)
+    "retries": 4,
+    "retry_delay": timedelta(minutes=5)
 }
 
 with DAG(
