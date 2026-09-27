@@ -96,7 +96,7 @@ print("Connected to Kafka. Listening for messages...")
 
 # Tăng batch size để giảm số file nhỏ ghi lên MinIO -> giảm số lần
 # COPY INTO nhỏ lẻ ở phía Snowflake (giảm chi phí compute cố định/lần load).
-BATCH_SIZE = 5000
+BATCH_SIZE = 10000
 FLUSH_INTERVAL_SEC = 120
 last_flush = time.time()
 
@@ -135,7 +135,7 @@ while True:
                         raise ValueError(f"Unknown op type: {op}")
 
                     if tmp is None:
-                        raise ValueError("Payload before/after is None — có thể do REPLICA IDENTITY chưa bật FULL")
+                        raise ValueError("Payload before/after is None")
 
                     tmp["_op"] = op
                     tmp["_ts_ms"] = payload.get("ts_ms")

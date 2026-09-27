@@ -8,7 +8,8 @@ with ranked as (
         v:email::string         as email,
         v:created_at::timestamp as created_at,
         v:is_deleted::boolean   as is_deleted,
-        current_timestamp       as load_timestamp,
+        _loaded_at              as load_timestamp,
+        _source_file            as source_file,
         row_number() over (
             partition by v:id::string
             order by v:_ts_ms::number desc
@@ -24,7 +25,8 @@ select
     email,
     created_at,
     is_deleted,
-    load_timestamp
+    load_timestamp,
+    source_file
 from
     ranked
 where

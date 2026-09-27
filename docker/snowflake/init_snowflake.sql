@@ -6,9 +6,21 @@ USE WAREHOUSE COMPUTE_WH;
 USE DATABASE BANKING;
 USE SCHEMA RAW;
 
-CREATE TABLE IF NOT EXISTS customer (v VARIANT);
-CREATE TABLE IF NOT EXISTS account (v VARIANT);
-CREATE TABLE IF NOT EXISTS transaction (v VARIANT);
+CREATE TABLE IF NOT EXISTS customer (
+    v VARIANT,
+    _source_file STRING,
+    _loaded_at TIMESTAMP_LTZ
+);
+CREATE TABLE IF NOT EXISTS account (
+    v VARIANT,
+    _source_file STRING,
+    _loaded_at TIMESTAMP_LTZ
+);
+CREATE TABLE IF NOT EXISTS transaction (
+    v VARIANT,
+    _source_file STRING,
+    _loaded_at TIMESTAMP_LTZ
+);
 
 
 
